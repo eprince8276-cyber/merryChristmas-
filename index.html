@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Merry Christmas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700;900&family=Montserrat:wght@300;400;700&display=swap" rel="stylesheet">
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        background-color: #050103;
+        overflow: hidden;
+      }
+      canvas {
+        display: block;
+      }
+    </style>
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@^19.0.0",
+        "react-dom/client": "https://esm.sh/react-dom@^19.0.0/client",
+        "three": "https://esm.sh/three@^0.182.0",
+        "@react-three/fiber": "https://esm.sh/@react-three/fiber@^9.0.0",
+        "@react-three/drei": "https://esm.sh/@react-three/drei@^10.0.0",
+        "@react-three/postprocessing": "https://esm.sh/@react-three/postprocessing@^3.0.0",
+        "htm": "https://esm.sh/htm@^3.1.1"
+      }
+    }
+    </script>
+  <link rel="stylesheet" href="/index.css">
+</head>
+  <body>
+    <div id="root"></div>
+
+    <script type="module">
+      import React, { useMemo, useRef, useState, useCallback, Suspense } from 'react';
+      import ReactDOM from 'react-dom/client';
+      import * as THREE from 'three';
+      import { Canvas, useFrame } from '@react-three/fiber';
+      import { OrbitControls, PerspectiveCamera, Environment, Sparkles, Float } from '@react-three/drei';
+      import { Bloom, EffectComposer, Noise, Vignette, ChromaticAberration } from '@react-three/postprocessing';
+      import htm from 'htm';
+
+      const html = htm.bind(React.createElement);
+
+      // --- Constants ---
+      const LEAF_COUNT = 4500;
+      const GIFT_COUNT = 200;
+      const BALL_COUNT = 350;
+      const TETRA_COUNT = 1000;
+
+      // --- Component: Snow ---
+      const Snow = ({ count = 1000 }) => {
+        const meshRef = useRef();
+        const particles = useMemo(() => {
+          const temp = [];
+          for (let i = 0; i < count; i++) {
+            temp.push({
+              position: new THREE.Vector3(THREE.MathUtils.randFloatSpread(40), THREE.MathUtils.randFloat(0, 30), THREE.MathUtils.randFloatSpread(40)),
+              speed: 0.02 + Math.random() * 0.05,
+              drift: Math.random() * 0.02,
+              phase: Math.random() * Math.PI * 2
+            });
+          }
+          return temp;
+        }, [count]);
+
+        const positions = useMemo(() => new Float32Array(count * 3), [count]);
+
+        useFrame((state) => {
+          const time = state.clock.getElapsedTime();
+          if (meshRef.current) {
+            particles.forEach((p, i) => {
+              p.position.y -= p.speed;
+              p.position.x += Math.sin(time + p.phase) * p.drift;
+              p.position.z += Math.cos(time + p.phase) * p.drift;
+              if (p.position.y < -10) {
+                p.position.y = 25;
+                p.position.x = THREE.MathUtils.randFloatSpread(40);
+                p.position.z = THREE.MathUtils.randFloatSpread(40);
+              }
+              positions[i * 3] = p.position.x;
+              positions[i * 3 + 1] = p.position.y;
+              positions[i * 3 + 2] = p.position.z;
+            });
+            meshRef.current.geometry.attributes.position.needsUpdate = true;
+          }
+        });
+
+        return html`
+          <points ref=${meshRef}>
+            <bufferGeometry>
+              <bufferAttribute attach="attributes-position" count=${count} array=${positions} itemSize=${3} />
+            </bufferGeometry>
+            <pointsMaterial size=${0.08} color="#FFFFFF" transparent opacity=${0.6} sizeAttenuation=${true} blending=${THREE.AdditiveBlending} />
+          </points>
+        `;
+      };
+
+      // --- Component: Ribbon ---
+      const Ribbon = ({ isChaos }) => {
+        const meshRef = useRef();
+        const tempObject = useMemo(() => new THREE.Object3D(), []);
+        const transitionRef = useRef({ factor: 0 });
+
+        const pathData = useMemo(() => {
+          const data = [];
+          const turns = 3.5;
+          const topY = 9.5;
+          const bottomY = -10;
+          const totalHeight = topY - bottomY;
+          const getChaosPos = (radius) => {
+            const phi = Math.random() * Math.PI * 2;
+            const theta = Math.acos(2 * Math.random() - 1);
+            const r = radius * Math.pow(Math.random(), 0.5);
+            return new THREE.Vector3(r * Math.sin(theta) * Math.cos(phi), r * Math.sin(theta) * Math.sin(phi), r * Math.cos(theta));
+          };
+
+          for (let i = 0; i < TETRA_COUNT; i++) {
+            const t = i / TETRA_COUNT;
+            const y = bottomY + t * totalHeight;
+            let treeRadius = y > 0 ? (1 - (y / 10)) * 4.5 : 4.5 + (Math.abs(y) / 8) * 2;
+            const radius = treeRadius + 1.0 + Math.sin(t * Math.PI * 10) * 0.2;
+            data.push({
+              baseAngle: t * Math.PI * 2 * turns,
+              radius, treeY: y,
+              chaosPos: getChaosPos(18),
+              phase: Math.random() * Math.PI * 2,
+              scale: 0.03 + Math.random() * 0.05,
+              speed: 0.5 + Math.random() * 1.5
+            });
+          }
+          return data;
+        }, []);
+
+        useFrame((state, delta) => {
+          const targetFactor = isChaos ? 1 : 0;
+          transitionRef.current.factor = THREE.MathUtils.lerp(transitionRef.current.factor, targetFactor, delta * 2.5);
+          const tFact = transitionRef.current.factor;
+
+          if (meshRef.current) {
+            const time = state.clock.getElapsedTime();
+            pathData.forEach((point, i) => {
+              const currentAngle = point.baseAngle + time * 0.2 + Math.sin(time * 0.5 + point.phase) * 0.1;
+              const spiralPos = new THREE.Vector3(Math.cos(currentAngle) * point.radius, point.treeY, Math.sin(currentAngle) * point.radius);
+              const drift = new THREE.Vector3(Math.sin(time * point.speed + point.phase) * 0.15, Math.cos(time * point.speed + point.phase) * 0.15, Math.cos(time * point.speed + point.phase) * 0.15);
+              tempObject.position.lerpVectors(spiralPos, point.chaosPos, tFact).add(drift);
+              tempObject.rotation.set(time * 2 + i, time * 1.5, point.phase);
+              tempObject.scale.setScalar(point.scale * (1 + Math.sin(time * 3 + point.phase) * 0.3));
+              tempObject.updateMatrix();
+              meshRef.current.setMatrixAt(i, tempObject.matrix);
+            });
+            meshRef.current.instanceMatrix.needsUpdate = true;
+          }
+        });
+
+        return html`
+          <instancedMesh ref=${meshRef} args=${[undefined, undefined, TETRA_COUNT]}>
+            <tetrahedronGeometry args=${[1, 0]} />
+            <meshStandardMaterial color="#FFD700" emissive="#FFA500" emissiveIntensity=${1.2} metalness=${1} roughness=${0.1} />
+          </instancedMesh>
+        `;
+      };
+
+      // --- Component: Star ---
+      const Star = ({ position, isChaos }) => {
+        const starRef = useRef();
+        const glowRef = useRef();
+        const starMaterialRef = useRef();
+        const transitionRef = useRef({ factor: 0 });
+        const treePos = useMemo(() => new THREE.Vector3(...position), [position]);
+        const chaosPos = useMemo(() => new THREE.Vector3(0, 5, 0), []);
+
+        const starShape = useMemo(() => {
+          const shape = new THREE.Shape();
+          for (let i = 0; i < 10; i++) {
+            const radius = i % 2 === 0 ? 0.85 : 0.35;
+            const angle = (i / 10) * Math.PI * 2 - Math.PI / 2;
+            if (i === 0) shape.moveTo(Math.cos(angle) * radius, Math.sin(angle) * radius);
+            else shape.lineTo(Math.cos(angle) * radius, Math.sin(angle) * radius);
+          }
+          shape.closePath();
+          return shape;
+        }, []);
+
+        const extrudeSettings = { steps: 1, depth: 0.15, bevelEnabled: true, bevelThickness: 0.08, bevelSize: 0.08, bevelOffset: 0, bevelSegments: 4 };
+        const colors = [new THREE.Color('#FFD700'), new THREE.Color('#FFA500'), new THREE.Color('#FFFACD')];
+
+        useFrame((state, delta) => {
+          const time = state.clock.getElapsedTime();
+          transitionRef.current.factor = THREE.MathUtils.lerp(transitionRef.current.factor, isChaos ? 1 : 0, delta * 2);
+          const t = transitionRef.current.factor;
+
+          if (starRef.current) {
+            starRef.current.position.lerpVectors(treePos, chaosPos, t);
+            starRef.current.rotation.y = time * 0.8;
+            starRef.current.rotation.x = Math.PI;
+            const pulse = 1 + Math.sin(time * 3) * 0.05;
+            starRef.current.scale.set(pulse, pulse, pulse);
+          }
+
+          if (glowRef.current) {
+            glowRef.current.intensity = (4 + Math.sin(time * 2) * 2) * (1 - t * 0.5);
+            const cycle = (time * 0.2) % 1;
+            let targetColor = colors[0].clone();
+            if (cycle < 0.33) targetColor.lerp(colors[1], cycle * 3);
+            else if (cycle < 0.66) targetColor = colors[1].clone().lerp(colors[2], (cycle - 0.33) * 3);
+            else targetColor = colors[2].clone().lerp(colors[0], (cycle - 0.66) * 3);
+            glowRef.current.color.copy(targetColor);
+            if (starMaterialRef.current) {
+              starMaterialRef.current.emissive.copy(targetColor);
+              starMaterialRef.current.emissiveIntensity = 2 + Math.sin(time * 2) * 1.5;
+            }
+          }
+        });
+
+        return html`
+          <group>
+            <${Float} speed=${3} rotationIntensity=${0.5} floatIntensity=${0.5}>
+              <mesh ref=${starRef}>
+                <extrudeGeometry args=${[starShape, extrudeSettings]} />
+                <meshStandardMaterial ref=${starMaterialRef} color="#FFD700" metalness=${1} roughness=${0.1} />
+              </mesh>
+            </${Float}>
+            <pointLight ref=${glowRef} intensity=${5} distance=${25} color="#FFD700" />
+            <${Sparkles} count=${60} scale=${[3, 3, 3]} size=${5} speed=${0.8} color="#FFD700" noise=${2} />
+          </group>
+        `;
+      };
+
+      // --- Component: ChristmasTree ---
+      const ChristmasTree = ({ isChaos }) => {
+        const lRef = useRef(); const gRef = useRef(); const bRef = useRef();
+        const tempObject = useMemo(() => new THREE.Object3D(), []);
+        const transitionRef = useRef({ factor: 0 });
+
+        const getChaosPos = (radius) => {
+          const phi = Math.random() * Math.PI * 2;
+          const theta = Math.acos(2 * Math.random() - 1);
+          const r = radius * Math.pow(Math.random(), 0.5);
+          return new THREE.Vector3(r * Math.sin(theta) * Math.cos(phi), r * Math.sin(theta) * Math.sin(phi), r * Math.cos(theta));
+        };
+
+        const leafData = useMemo(() => {
+          const data = [];
+          const c1 = new THREE.Color('#FFB7C5'); const c2 = new THREE.Color('#FF1493');
+          for (let i = 0; i < LEAF_COUNT; i++) {
+            const y = Math.random() * 18 - 8;
+            const r = y > 0 ? (1 - (y / 10)) * 4.5 : 4.5 + (Math.abs(y) / 8) * 2;
+            const theta = Math.random() * Math.PI * 2;
+            const scatter = y > 0 ? Math.pow(1 - y/10, 2) * 1.5 : 1.5 + (Math.abs(y)/8) * 8;
+            const finalR = r + (Math.random() - 0.5) * scatter;
+            data.push({
+              treePos: new THREE.Vector3(Math.cos(theta) * finalR, y - 1.2, Math.sin(theta) * finalR),
+              chaosPos: getChaosPos(15),
+              rotation: new THREE.Euler(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI),
+              scale: 0.05 + Math.random() * 0.12,
+              color: c2.clone().lerp(c1, (y + 8) / 18),
+              speed: 0.04 + Math.random() * 0.08
+            });
+          }
+          return data;
+        }, []);
+
+        const giftData = useMemo(() => Array.from({ length: GIFT_COUNT }, () => {
+          const y = Math.random() * 15 - 6;
+          const r = (y > 0 ? (1 - y/10) * 4.0 : 4.4) + Math.random() * 0.4;
+          const theta = Math.random() * Math.PI * 2;
+          return {
+            treePos: new THREE.Vector3(Math.cos(theta) * r, y - 1.2, Math.sin(theta) * r),
+            chaosPos: getChaosPos(15),
+            scale: 0.12 + Math.random() * 0.18,
+            rotation: new THREE.Euler(Math.random(), Math.random(), Math.random()),
+            phase: Math.random() * Math.PI * 2
+          };
+        }), []);
+
+        const ballData = useMemo(() => Array.from({ length: BALL_COUNT }, () => {
+          const y = Math.random() * 16 - 7;
+          const r = (y > 0 ? (1 - y/10) * 4.1 : 4.5) + Math.random() * 0.3;
+          const theta = Math.random() * Math.PI * 2;
+          return {
+            treePos: new THREE.Vector3(Math.cos(theta) * r, y - 1.2, Math.sin(theta) * r),
+            chaosPos: getChaosPos(15),
+            scale: 0.1 + Math.random() * 0.1,
+            color: new THREE.Color(['#FFFFFF', '#A020F0', '#E6E6FA'][Math.floor(Math.random() * 3)]),
+            phase: Math.random() * Math.PI * 2
+          };
+        }), []);
+
+        useFrame((state, delta) => {
+          const time = state.clock.getElapsedTime();
+          transitionRef.current.factor = THREE.MathUtils.lerp(transitionRef.current.factor, isChaos ? 1 : 0, delta * 3);
+          const t = transitionRef.current.factor;
+
+          if (lRef.current) {
+            leafData.forEach((leaf, i) => {
+              const drift = new THREE.Vector3(Math.sin(time * leaf.speed + i) * 0.05, Math.cos(time * leaf.speed * 0.5 + i) * 0.03, Math.cos(time * leaf.speed + i) * 0.05);
+              tempObject.position.lerpVectors(leaf.treePos, leaf.chaosPos, t).add(drift);
+              tempObject.rotation.set(leaf.rotation.x + time * leaf.speed * 0.2 + (t * time * 0.5), leaf.rotation.y + time * leaf.speed * 0.2 + (t * time * 0.5), leaf.rotation.z);
+              tempObject.scale.setScalar(leaf.scale);
+              tempObject.updateMatrix();
+              lRef.current.setMatrixAt(i, tempObject.matrix);
+              lRef.current.setColorAt(i, leaf.color);
+            });
+            lRef.current.instanceMatrix.needsUpdate = true;
+            if (lRef.current.instanceColor) lRef.current.instanceColor.needsUpdate = true;
+          }
+
+          if (gRef.current) {
+            giftData.forEach((gift, i) => {
+              tempObject.position.lerpVectors(gift.treePos, gift.chaosPos, t);
+              tempObject.rotation.set(gift.rotation.x + time * 0.1, gift.rotation.y + time * 0.2, gift.rotation.z);
+              tempObject.scale.setScalar(gift.scale * (0.95 + Math.sin(time + gift.phase) * 0.05));
+              tempObject.updateMatrix();
+              gRef.current.setMatrixAt(i, tempObject.matrix);
+            });
+            gRef.current.instanceMatrix.needsUpdate = true;
+          }
+
+          if (bRef.current) {
+            ballData.forEach((ball, i) => {
+              tempObject.position.lerpVectors(ball.treePos, ball.chaosPos, t);
+              tempObject.scale.setScalar(ball.scale * (1 + Math.sin(time * 2 + ball.phase) * 0.1));
+              tempObject.updateMatrix();
+              bRef.current.setMatrixAt(i, tempObject.matrix);
+              bRef.current.setColorAt(i, ball.color);
+            });
+            bRef.current.instanceMatrix.needsUpdate = true;
+            if (bRef.current.instanceColor) bRef.current.instanceColor.needsUpdate = true;
+          }
+        });
+
+        return html`
+          <group>
+            <instancedMesh ref=${lRef} args=${[undefined, undefined, LEAF_COUNT]}>
+              <octahedronGeometry args=${[1, 0]} />
+              <meshStandardMaterial metalness=${0.6} roughness=${0.4} emissive="#FF69B4" emissiveIntensity=${0.08} />
+            </instancedMesh>
+            <instancedMesh ref=${gRef} args=${[undefined, undefined, GIFT_COUNT]}>
+              <boxGeometry args=${[1, 1, 1]} />
+              <meshStandardMaterial color="#FFD700" metalness=${1} roughness=${0.1} emissive="#FFA500" emissiveIntensity=${0.1} />
+            </instancedMesh>
+            <instancedMesh ref=${bRef} args=${[undefined, undefined, BALL_COUNT]}>
+              <icosahedronGeometry args=${[1, 1]} />
+              <meshPhysicalMaterial metalness=${0.9} roughness=${0.05} envMapIntensity=${1.5} />
+            </instancedMesh>
+          </group>
+        `;
+      };
+
+      // --- Component: Scene ---
+      const Scene = () => {
+        const groupRef = useRef();
+        const [isChaos, setIsChaos] = useState(false);
+        const handlePointerDown = useCallback((e) => { e.stopPropagation(); setIsChaos(prev => !prev); }, []);
+
+        useFrame((state) => {
+          if (groupRef.current) groupRef.current.position.y = Math.sin(state.clock.elapsedTime * 0.4) * 0.3;
+        });
+
+        return html`
+          <group>
+            <ambientLight intensity=${0.2} />
+            <spotLight position=${[15, 25, 10]} angle=${0.4} penumbra=${1} intensity=${3} castShadow color="#FF1493" />
+            <pointLight position=${[-15, -10, -10]} intensity=${1.5} color="#FF69B4" />
+            <pointLight position=${[0, 15, 0]} intensity=${1} color="#FFFFFF" />
+            <pointLight position=${[5, -5, 5]} intensity=${1} color="#8A2BE2" />
+
+            <mesh position=${[0, 0, -5]} onPointerDown=${handlePointerDown} visible=${false}>
+              <planeGeometry args=${[100, 100]} />
+            </mesh>
+
+            <group ref=${groupRef}>
+              <${ChristmasTree} isChaos=${isChaos} />
+              <${Star} position=${[0, 9.5, 0]} isChaos=${isChaos} />
+              <${Ribbon} isChaos=${isChaos} />
+            </group>
+
+            <${Snow} count=${1200} />
+
+            <${EffectComposer} disableNormalPass>
+              <${Bloom} luminanceThreshold=${0.25} mipmapBlur intensity=${1.5} radius=${0.4} />
+              <${ChromaticAberration} offset=${[0.0006, 0.0006]} />
+              <${Noise} opacity=${0.05} />
+              <${Vignette} offset=${0.1} darkness=${1.1} />
+            </${EffectComposer}>
+          </group>
+        `;
+      };
+
+      // --- Component: App ---
+      const App = () => html`
+        <div className="relative w-full h-screen bg-[#050103]">
+          <${Canvas} shadows gl=${{ antialias: true, stencil: false, depth: true, alpha: false, powerPreference: "high-performance" }} dpr=${[1, 2]}>
+            <${Suspense} fallback=${null}>
+              <${PerspectiveCamera} makeDefault position=${[0, 4, 25]} fov=${45} near=${0.1} far=${1000} />
+              <color attach="background" args=${['#050103']} />
+              <${Scene} />
+              <${OrbitControls} makeDefault enablePan=${true} enableZoom=${true} enableRotate=${true} enableDamping=${true} dampingFactor=${0.05} rotateSpeed=${0.7} zoomSpeed=${1.2} panSpeed=${0.8} target=${[0, 2, 0]} screenSpacePanning=${true} maxPolarAngle=${Math.PI / 1.2} minPolarAngle=${Math.PI / 12} minDistance=${5} maxDistance=${60} autoRotate=${true} autoRotateSpeed=${0.4} />
+              <${Environment} preset="city" />
+            </${Suspense}>
+          </${Canvas}>
+
+          <div className="absolute top-12 left-0 w-full pointer-events-none flex flex-col items-center justify-center select-none">
+            <h1 className="text-7xl md:text-9xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-b from-[#FF69B4] to-[#FFB7C5] drop-shadow-[0_0_25px_rgba(255,105,180,0.6)]" style=${{ fontFamily: "'Cinzel Decorative', cursive" }}>Merry</h1>
+            <h1 className="text-7xl md:text-9xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-t from-[#FF69B4] to-white -mt-4 drop-shadow-[0_0_25px_rgba(255,255,255,0.4)]" style=${{ fontFamily: "'Cinzel Decorative', cursive" }}>Christmas</h1>
+          </div>
+
+          <div className="absolute bottom-8 left-0 w-full flex justify-center pointer-events-none opacity-40 select-none">
+            <p className="text-[#FF69B4] font-light tracking-[0.4em] uppercase text-[10px]" style=${{ fontFamily: "'Montserrat', sans-serif" }}>Cyberpunk Fantasy Edition • 2024</p>
+          </div>
+        </div>
+      `;
+
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(html`<${React.StrictMode}><${App} /><//>`);
+    </script>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>
